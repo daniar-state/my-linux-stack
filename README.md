@@ -7,7 +7,7 @@
 
 ![Ubuntu Version](https://img.shields.io/badge/Ubuntu-24.04%20LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)
 ![GNOME](https://img.shields.io/badge/GNOME-46-4A90E2?style=for-the-badge&logo=gnome&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)
 ![Maintenance](https://img.shields.io/badge/Maintained-Yes-green?style=for-the-badge)
 
 **[🇷🇺 Русский](#русский) | [🇺🇸 English](#english)**
