@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 GitHub Discussions
+    url: https://github.com/daniar-state/my-linux-stack/discussions
+    about: Задать вопрос, обсудить идеи или поделиться опытом / Ask questions, discuss ideas or share experience
+  - name: 📧 Email поддержка / Email Support
+    url: mailto:enflyge@mail.ru
+    about: Прямая связь с мейнтейнером / Direct contact with maintainer
+  - name: 🔒 Сообщить об уязвимости / Report Security Vulnerability
+    url: https://github.com/daniar-state/my-linux-stack/security/advisories/new
+    about: Приватно сообщить об уязвимости безопасности / Privately report a security vulnerability
+  - name: 📚 Wiki и документация / Wiki and Documentation
+    url: https://github.com/daniar-state/my-linux-stack/wiki
+    about: Дополнительная документация и руководства / Additional documentation and guides
+  - name: 🌍 Сообщество Ubuntu / Ubuntu Community
+    url: https://discourse.ubuntu.com/
+    about: Общие вопросы по Ubuntu (не связанные с проектом) / General Ubuntu questions (not project-related)
