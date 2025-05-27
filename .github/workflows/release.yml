@@ -1,0 +1,337 @@
+name: 🚀 Release Management
+# Управление релизами и автоматическое создание архивов
+# Release management and automatic archive creation
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validate-release:
+    name: ✅ Validate Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Validate version format
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          version="${{ github.event.inputs.version }}"
+        else
+          version="${{ github.ref_name }}"
+        fi
+        
+        echo "Validating version: $version"
+        
+        # Check semantic versioning format
+        if [[ ! $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+          echo "❌ Invalid version format. Use semantic versioning (e.g., v1.0.0)"
+          exit 1
+        fi
+        
+        echo "✅ Version format is valid: $version"
+        echo "VERSION=$version" >> $GITHUB_ENV
+
+    - name: 📋 Check changelog
+      run: |
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "❌ CHANGELOG.md not found"
+          exit 1
+        fi
+        
+        # Check if version is mentioned in changelog
+        if ! grep -q "${{ env.VERSION }}" CHANGELOG.md; then
+          echo "⚠️  Version ${{ env.VERSION }} not found in CHANGELOG.md"
+          echo "Please update CHANGELOG.md before releasing"
+          exit 1
+        fi
+        
+        echo "✅ Version found in CHANGELOG.md"
+
+  create-release-archive:
+    name: 📦 Create Release Archive
+    runs-on: ubuntu-latest
+    needs: validate-release
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🗂️ Prepare release files
+      run: |
+        echo "📦 Preparing release archive..."
+        
+        # Create release directory
+        mkdir -p release-temp/my-linux-stack
+        
+        # Copy essential files
+        cp -r Instructions/ release-temp/my-linux-stack/
+        cp -r scripts/ release-temp/my-linux-stack/ 2>/dev/null || echo "No scripts directory"
+        cp -r configs/ release-temp/my-linux-stack/ 2>/dev/null || echo "No configs directory"
+        
+        # Copy documentation
+        cp README.md release-temp/my-linux-stack/
+        cp LICENSE release-temp/my-linux-stack/
+        cp CHANGELOG.md release-temp/my-linux-stack/
+        cp CONTRIBUTING.md release-temp/my-linux-stack/
+        cp SECURITY.md release-temp/my-linux-stack/
+        
+        # Create installation info
+        cat > release-temp/my-linux-stack/RELEASE_INFO.md << EOF
+        # 🐧 Ubuntu Developer Setup - Release Information
+        
+        **Version:** ${{ github.ref_name || github.event.inputs.version }}
+        **Release Date:** $(date +%Y-%m-%d)
+        **Supported Ubuntu:** 24.04 LTS
+        
+        ## 📋 Quick Start
+        
+        1. Extract this archive to your desired location
+        2. Read \`Instructions/INSTALL_RU(EN).md\` for detailed setup
+        3. Run scripts from the \`scripts/\` directory as needed
+        
+        ## 🔒 Verification
+        
+        You can verify this release by checking:
+        - GitHub: https://github.com/daniar-state/my-linux-stack/releases
+        - Commit SHA: ${{ github.sha }}
+        
+        ## 📞 Support
+        
+        - 📧 Email: enflyge@mail.ru
+        - 🐛 Issues: https://github.com/daniar-state/my-linux-stack/issues
+        - 💬 Discussions: https://github.com/daniar-state/my-linux-stack/discussions
+        EOF
+        
+        # Set proper permissions for scripts
+        find release-temp/my-linux-stack/scripts/ -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
+        
+        echo "✅ Release files prepared"
+
+    - name: 📦 Create archives
+      run: |
+        cd release-temp
+        
+        # Create ZIP archive (Windows compatible)
+        zip -r "../my-linux-stack-${{ github.ref_name || github.event.inputs.version }}.zip" my-linux-stack/
+        
+        # Create TAR.GZ archive (Linux preferred)
+        tar -czf "../my-linux-stack-${{ github.ref_name || github.event.inputs.version }}.tar.gz" my-linux-stack/
+        
+        cd ..
+        
+        # Generate checksums
+        echo "📊 Generating checksums..."
+        sha256sum *.zip *.tar.gz > checksums.txt
+        
+        echo "✅ Archives created:"
+        ls -la *.zip *.tar.gz checksums.txt
+
+    - name: 📤 Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-archives
+        path: |
+          *.zip
+          *.tar.gz
+          checksums.txt
+
+  generate-release-notes:
+    name: 📝 Generate Release Notes
+    runs-on: ubuntu-latest
+    needs: validate-release
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: 📝 Extract changelog for version
+      run: |
+        version="${{ github.ref_name || github.event.inputs.version }}"
+        
+        echo "📝 Extracting changelog for $version..."
+        
+        # Extract changelog section for this version
+        if [ -f "CHANGELOG.md" ]; then
+          # Find the section for current version
+          awk "/## \[$version\]/{flag=1; next} /## \[/{flag=0} flag" CHANGELOG.md > release_notes.md
+          
+          # If nothing found, try without brackets
+          if [ ! -s release_notes.md ]; then
+            awk "/## $version/{flag=1; next} /## /{flag=0} flag" CHANGELOG.md > release_notes.md
+          fi
+          
+          # Add header if content found
+          if [ -s release_notes.md ]; then
+            echo "# 🎉 Release $version" > temp_notes.md
+            echo "" >> temp_notes.md
+            cat release_notes.md >> temp_notes.md
+            mv temp_notes.md release_notes.md
+          else
+            echo "# 🎉 Release $version" > release_notes.md
+            echo "" >> release_notes.md
+            echo "## ✨ Changes in this release" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "See [CHANGELOG.md](CHANGELOG.md) for detailed changes." >> release_notes.md
+          fi
+        else
+          echo "# 🎉 Release $version" > release_notes.md
+          echo "" >> release_notes.md
+          echo "## ✨ Ubuntu Developer Setup" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "Complete guide for transitioning from Windows to Ubuntu 24.04 LTS for developers." >> release_notes.md
+        fi
+        
+        # Add installation instructions
+        cat >> release_notes.md << EOF
+        
+        ## 📥 Installation
+        
+        1. **Download archive**: Choose ZIP (Windows) or TAR.GZ (Linux)
+        2. **Extract**: Extract to your preferred location
+        3. **Follow guide**: Read \`Instructions/INSTALL_RU(EN).md\`
+        4. **Run scripts**: Execute scripts as needed
+        
+        ## 🔒 Verification
+        
+        Verify file integrity using checksums:
+        \`\`\`bash
+        sha256sum -c checksums.txt
+        \`\`\`
+        
+        ## 🖥️ System Requirements
+        
+        - **OS**: Ubuntu 24.04 LTS (recommended)
+        - **Arch**: x86_64 (AMD64)
+        - **RAM**: 8GB+ recommended
+        - **Storage**: 50GB+ free space
+        
+        ## 🚀 What's Included
+        
+        - ✅ Complete Ubuntu 24.04 LTS installation guide
+        - ✅ Development environment setup (Node.js, Python, Go, Docker)
+        - ✅ GNOME customization with WhiteSur theme
+        - ✅ Automated installation scripts
+        - ✅ Security and backup configurations
+        - ✅ Performance optimization guides
+        
+        ## 📞 Support
+        
+        - 🐛 **Issues**: [Report bugs](https://github.com/daniar-state/my-linux-stack/issues)
+        - 💬 **Discussions**: [Ask questions](https://github.com/daniar-state/my-linux-stack/discussions)
+        - 📧 **Email**: enflyge@mail.ru
+        EOF
+        
+        echo "✅ Release notes generated"
+
+    - name: 📤 Upload release notes
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-notes
+        path: release_notes.md
+
+  create-github-release:
+    name: 🎉 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [create-release-archive, generate-release-notes]
+    
+    steps:
+    - name: 📥 Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+        
+    - name: 📖 Read release notes
+      id: release_notes
+      run: |
+        if [ -f "release_notes.md" ]; then
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        else
+          echo "RELEASE_NOTES=Release ${{ github.ref_name || github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 🎉 Create release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name || github.event.inputs.version }}
+        release_name: 🐧 Ubuntu Developer Setup ${{ github.ref_name || github.event.inputs.version }}
+        body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
+        draft: false
+        prerelease: ${{ github.event.inputs.prerelease || false }}
+
+    - name: 📎 Upload ZIP archive
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./my-linux-stack-${{ github.ref_name || github.event.inputs.version }}.zip
+        asset_name: my-linux-stack-${{ github.ref_name || github.event.inputs.version }}.zip
+        asset_content_type: application/zip
+
+    - name: 📎 Upload TAR.GZ archive
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./my-linux-stack-${{ github.ref_name || github.event.inputs.version }}.tar.gz
+        asset_name: my-linux-stack-${{ github.ref_name || github.event.inputs.version }}.tar.gz
+        asset_content_type: application/gzip
+
+    - name: 📎 Upload checksums
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./checksums.txt
+        asset_name: checksums.txt
+        asset_content_type: text/plain
+
+  notify-release:
+    name: 📢 Notify Release
+    runs-on: ubuntu-latest
+    needs: create-github-release
+    if: always()
+    
+    steps:
+    - name: 📊 Release summary
+      run: |
+        echo "## 🎉 Release Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ github.ref_name || github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ needs.create-github-release.result == 'success' && '✅ Success' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Date:** $(date '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ needs.create-github-release.result }}" = "success" ]; then
+          echo "### 🔗 Release Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [📦 Release Page](https://github.com/daniar-state/my-linux-stack/releases/tag/${{ github.ref_name || github.event.inputs.version }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [📝 Changelog](https://github.com/daniar-state/my-linux-stack/blob/main/CHANGELOG.md)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📥 Download Options" >> $GITHUB_STEP_SUMMARY
+          echo "- ZIP Archive (Windows compatible)" >> $GITHUB_STEP_SUMMARY
+          echo "- TAR.GZ Archive (Linux preferred)" >> $GITHUB_STEP_SUMMARY
+          echo "- Checksums for verification" >> $GITHUB_STEP_SUMMARY
+        fi

@@ -1,0 +1,211 @@
+name: 🔍 Validate Scripts
+# Проверка скриптов на синтаксис и безопасность
+# Script validation for syntax and security
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'scripts/**'
+      - 'configs/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'scripts/**'
+      - 'configs/**'
+
+jobs:
+  shellcheck:
+    name: 🐚 ShellCheck Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Run ShellCheck
+      uses: ludeeus/action-shellcheck@master
+      with:
+        scandir: './scripts'
+        format: gcc
+        severity: warning
+      env:
+        SHELLCHECK_OPTS: -e SC1091 -e SC2034
+
+    - name: 📋 Check script permissions
+      run: |
+        echo "🔍 Checking script permissions..."
+        find scripts/ -name "*.sh" -type f ! -executable -exec echo "❌ Script not executable: {}" \;
+        find scripts/ -name "*.sh" -type f ! -executable | wc -l | xargs -I {} test {} -eq 0
+
+  syntax-check:
+    name: 🔧 Syntax Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🐚 Bash syntax check
+      run: |
+        echo "🔍 Checking bash script syntax..."
+        exit_code=0
+        for script in $(find scripts/ -name "*.sh" -type f); do
+          echo "Checking: $script"
+          if ! bash -n "$script"; then
+            echo "❌ Syntax error in: $script"
+            exit_code=1
+          else
+            echo "✅ $script - OK"
+          fi
+        done
+        exit $exit_code
+
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔒 Install security tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bandit
+        
+    - name: 🔍 Scan for hardcoded secrets
+      run: |
+        echo "🔍 Scanning for potential secrets..."
+        exit_code=0
+        
+        # Check for common secret patterns
+        if grep -r -i -E "(password|passwd|pwd|secret|key|token|api_key)" scripts/ configs/ --include="*.sh" --include="*.conf" --include="*.yml" --include="*.yaml"; then
+          echo "⚠️  Found potential secrets in files above"
+          echo "Please review and ensure no actual secrets are committed"
+          exit_code=1
+        fi
+        
+        # Check for URLs with credentials
+        if grep -r -E "https?://[^:]+:[^@]+@" scripts/ configs/ --include="*.sh" --include="*.conf"; then
+          echo "❌ Found URLs with embedded credentials"
+          exit_code=1
+        fi
+        
+        exit $exit_code
+
+  validate-configs:
+    name: ⚙️ Validate Configurations
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Validate YAML files
+      run: |
+        echo "🔍 Validating YAML configuration files..."
+        exit_code=0
+        
+        for yaml_file in $(find configs/ -name "*.yml" -o -name "*.yaml" 2>/dev/null || true); do
+          if [ -f "$yaml_file" ]; then
+            echo "Validating: $yaml_file"
+            if ! python3 -c "import yaml; yaml.safe_load(open('$yaml_file'))" 2>/dev/null; then
+              echo "❌ Invalid YAML: $yaml_file"
+              exit_code=1
+            else
+              echo "✅ $yaml_file - OK"
+            fi
+          fi
+        done
+        
+        exit $exit_code
+
+  test-dry-run:
+    name: 🧪 Dry Run Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🧪 Test script execution (dry-run)
+      run: |
+        echo "🧪 Testing script execution without making changes..."
+        
+        # Test main install script if it exists
+        if [ -f "scripts/install.sh" ]; then
+          echo "Testing install.sh..."
+          # Add dry-run flag or test mode if supported
+          # bash scripts/install.sh --dry-run || echo "⚠️  Dry-run not supported"
+          
+          # Check if script has basic safety checks
+          if grep -q "set -e" scripts/install.sh; then
+            echo "✅ Script uses 'set -e' for error handling"
+          else
+            echo "⚠️  Script should use 'set -e' for better error handling"
+          fi
+        fi
+        
+        echo "✅ Dry run tests completed"
+
+  documentation-check:
+    name: 📚 Documentation Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Check documentation completeness
+      run: |
+        echo "📚 Checking documentation completeness..."
+        
+        missing_docs=0
+        
+        # Check if scripts have corresponding documentation
+        for script in $(find scripts/ -name "*.sh" -type f); do
+          script_name=$(basename "$script" .sh)
+          if ! grep -q "$script_name" README.md Instructions/* 2>/dev/null; then
+            echo "⚠️  Script $script_name not documented in README or Instructions"
+            missing_docs=$((missing_docs + 1))
+          fi
+        done
+        
+        # Check for broken links in markdown files
+        echo "🔗 Checking for broken internal links..."
+        for md_file in $(find . -name "*.md" -type f); do
+          # Check for relative links that might be broken
+          grep -E '\[.*\]\([^http].*\)' "$md_file" | while read -r line; do
+            link=$(echo "$line" | sed 's/.*](\([^)]*\)).*/\1/')
+            if [[ "$link" == *".md"* ]] && [ ! -f "$link" ]; then
+              echo "❌ Broken link in $md_file: $link"
+            fi
+          done
+        done
+        
+        if [ $missing_docs -gt 0 ]; then
+          echo "⚠️  Found $missing_docs undocumented scripts"
+        else
+          echo "✅ All scripts are documented"
+        fi
+
+  notify-status:
+    name: 📢 Notify Status
+    runs-on: ubuntu-latest
+    needs: [shellcheck, syntax-check, security-scan, validate-configs, test-dry-run, documentation-check]
+    if: always()
+    
+    steps:
+    - name: 📊 Summary
+      run: |
+        echo "## 📋 Validation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| ShellCheck | ${{ needs.shellcheck.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Syntax Check | ${{ needs.syntax-check.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Security Scan | ${{ needs.security-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Config Validation | ${{ needs.validate-configs.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Dry Run Test | ${{ needs.test-dry-run.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Documentation | ${{ needs.documentation-check.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY

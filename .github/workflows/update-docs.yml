@@ -1,0 +1,273 @@
+name: 📚 Update Documentation
+# Автоматическое обновление документации
+# Automatic documentation updates
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'scripts/**'
+      - 'Instructions/**'
+      - 'README.md'
+  schedule:
+    # Еженедельная проверка обновлений документации
+    # Weekly documentation update check
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+jobs:
+  update-readme:
+    name: 📝 Update README Badges
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: 🔍 Count scripts and configs
+      id: count
+      run: |
+        script_count=$(find scripts/ -name "*.sh" -type f | wc -l)
+        config_count=$(find configs/ -name "*" -type f | wc -l)
+        instruction_count=$(find Instructions/ -name "*.md" -type f | wc -l)
+        
+        echo "scripts=$script_count" >> $GITHUB_OUTPUT
+        echo "configs=$config_count" >> $GITHUB_OUTPUT
+        echo "instructions=$instruction_count" >> $GITHUB_OUTPUT
+        
+        echo "📊 Found: $script_count scripts, $config_count configs, $instruction_count instructions"
+
+    - name: 📈 Generate statistics
+      run: |
+        echo "## 📊 Статистика проекта / Project Statistics" > STATS.md
+        echo "" >> STATS.md
+        echo "- 🔧 Скрипты: **${{ steps.count.outputs.scripts }}**" >> STATS.md
+        echo "- ⚙️ Конфигурации: **${{ steps.count.outputs.configs }}**" >> STATS.md
+        echo "- 📚 Инструкции: **${{ steps.count.outputs.instructions }}**" >> STATS.md
+        echo "- 📅 Последнее обновление: **$(date +'%Y-%m-%d %H:%M UTC')**" >> STATS.md
+        echo "" >> STATS.md
+        
+        # Add supported technologies count
+        tech_count=$(grep -o '!\[.*\](https://img.shields.io/badge/.*' README.md | wc -l)
+        echo "- 🛠️ Поддерживаемые технологии: **$tech_count**" >> STATS.md
+
+  check-external-links:
+    name: 🔗 Check External Links
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔗 Install link checker
+      run: |
+        npm install -g markdown-link-check
+        
+    - name: 🔍 Check links in README
+      run: |
+        echo "🔗 Checking external links in documentation..."
+        
+        # Create config for link checker
+        cat > .markdown-link-check.json << EOF
+        {
+          "ignorePatterns": [
+            {
+              "pattern": "^http://localhost"
+            },
+            {
+              "pattern": "^https://127.0.0.1"
+            }
+          ],
+          "replacementPatterns": [],
+          "httpHeaders": [
+            {
+              "urls": ["https://github.com/"],
+              "headers": {
+                "Accept": "text/html"
+              }
+            }
+          ],
+          "timeout": "10s",
+          "retryOn429": true,
+          "retryCount": 3,
+          "fallbackRetryDelay": "30s"
+        }
+        EOF
+        
+        # Check all markdown files
+        exit_code=0
+        for file in README.md CONTRIBUTING.md CHANGELOG.md; do
+          if [ -f "$file" ]; then
+            echo "Checking: $file"
+            if ! markdown-link-check "$file" -c .markdown-link-check.json; then
+              echo "❌ Found broken links in: $file"
+              exit_code=1
+            else
+              echo "✅ $file - All links OK"
+            fi
+          fi
+        done
+        
+        exit $exit_code
+
+  validate-instructions:
+    name: 📋 Validate Instructions
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Test command examples
+      run: |
+        echo "🧪 Testing command examples in instructions..."
+        
+        # Extract and test basic commands from instructions
+        exit_code=0
+        
+        # Test basic commands that should work on Ubuntu 24.04
+        test_commands=(
+          "which bash"
+          "which python3"
+          "which git"
+          "lsb_release -rs"
+          "uname -r"
+        )
+        
+        for cmd in "${test_commands[@]}"; do
+          echo "Testing: $cmd"
+          if ! eval "$cmd" > /dev/null 2>&1; then
+            echo "❌ Command failed: $cmd"
+            exit_code=1
+          else
+            echo "✅ $cmd - OK"
+          fi
+        done
+        
+        # Check if we're on Ubuntu 24.04
+        version=$(lsb_release -rs)
+        if [ "$version" = "24.04" ]; then
+          echo "✅ Running on Ubuntu 24.04 as expected"
+        else
+          echo "⚠️  Running on Ubuntu $version, instructions target 24.04"
+        fi
+        
+        exit $exit_code
+
+  security-audit:
+    name: 🔒 Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔒 Audit dependencies and URLs
+      run: |
+        echo "🔒 Performing security audit..."
+        
+        # Check for suspicious URLs or downloads
+        echo "🔍 Checking for external downloads..."
+        suspicious_patterns=(
+          "curl.*http://[^s]"  # HTTP downloads (not HTTPS)
+          "wget.*http://[^s]"  # HTTP downloads (not HTTPS)
+          "download.*\.exe"    # Executable downloads
+          "install.*\.deb.*http://"  # Insecure package downloads
+        )
+        
+        exit_code=0
+        for pattern in "${suspicious_patterns[@]}"; do
+          if grep -r -E "$pattern" scripts/ Instructions/ 2>/dev/null; then
+            echo "⚠️  Found potentially insecure pattern: $pattern"
+            exit_code=1
+          fi
+        done
+        
+        # Check for recommended security practices
+        echo "🔍 Checking security best practices..."
+        if grep -r "set -e" scripts/ > /dev/null; then
+          echo "✅ Scripts use 'set -e' for error handling"
+        else
+          echo "⚠️  Consider adding 'set -e' to scripts"
+        fi
+        
+        if grep -r "sudo.*curl\|sudo.*wget" scripts/ > /dev/null; then
+          echo "⚠️  Found sudo with curl/wget - review for security"
+          exit_code=1
+        fi
+        
+        exit $exit_code
+
+  auto-update-changelog:
+    name: 📋 Auto Update Changelog
+    runs-on: ubuntu-latest
+    needs: [update-readme, check-external-links, validate-instructions]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+        
+    - name: 📋 Generate changelog entry
+      run: |
+        echo "📋 Generating changelog entry for recent commits..."
+        
+        # Get commits since last tag or last 10 commits
+        last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        if [ -n "$last_tag" ]; then
+          commits=$(git log ${last_tag}..HEAD --oneline --pretty=format:"- %s" 2>/dev/null || git log -10 --oneline --pretty=format:"- %s")
+        else
+          commits=$(git log -10 --oneline --pretty=format:"- %s")
+        fi
+        
+        if [ -n "$commits" ]; then
+          # Create temporary changelog entry
+          date_today=$(date +%Y-%m-%d)
+          
+          echo "## [Unreleased] - $date_today" > TEMP_CHANGELOG.md
+          echo "" >> TEMP_CHANGELOG.md
+          echo "### 🔄 Recent Changes / Последние изменения" >> TEMP_CHANGELOG.md
+          echo "$commits" >> TEMP_CHANGELOG.md
+          echo "" >> TEMP_CHANGELOG.md
+          
+          # Merge with existing changelog
+          if [ -f "CHANGELOG.md" ]; then
+            tail -n +2 CHANGELOG.md >> TEMP_CHANGELOG.md
+            mv TEMP_CHANGELOG.md CHANGELOG.md
+          fi
+          
+          echo "✅ Changelog updated with recent changes"
+        fi
+
+  commit-updates:
+    name: 💾 Commit Documentation Updates
+    runs-on: ubuntu-latest
+    needs: [auto-update-changelog]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: ⚙️ Configure git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+    - name: 💾 Commit changes if any
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          git add .
+          git commit -m "📚 docs: auto-update documentation [skip ci]"
+          git push
+          echo "✅ Documentation updated and committed"
+        else
+          echo "ℹ️  No documentation changes to commit"
+        fi
